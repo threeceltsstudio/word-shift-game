@@ -1,0 +1,15 @@
+{
+    "game": {
+        "id": "word-shift",
+        "name": "Word Shift",
+        "version": "1.0.0"
+    },
+    "ads": {
+        "banner": true,
+        "interstitial": true,
+        "rewarded": true
+    },
+    "iap": {
+        "items": []
+    }
+} 
