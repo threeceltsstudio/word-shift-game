@@ -112,64 +112,30 @@ class AudioManager {
 }
 
 // Initialize Playgama SDK
-let bridge;
+let bridge = window.PG_BRIDGE;
+let isPlaygamaEnvironment = false;
+
 async function initializePlaygama() {
     try {
-        await bridge.initialize();
-        // Send mandatory game_ready message
-        await bridge.platform.sendMessage("game_ready");
-        console.log('Playgama SDK initialized successfully');
-
-        // Get device type and adjust UI if needed
-        const deviceType = bridge.device.type;
-        document.body.classList.add(`device-${deviceType}`);
-        console.log('Device type:', deviceType);
-
-        // Check authorization support
-        if (bridge.player.isAuthorizationSupported) {
-            // Try to authorize player
-            try {
-                const options = {};
-                if (bridge.platform.id === 'yandex') {
-                    options.scopes = true; // Request name and photo access
-                }
-                await bridge.player.authorize(options);
-                console.log('Player authorized successfully');
-            } catch (error) {
-                console.log('Player authorization failed:', error);
-            }
+        // Check if we're in a Playgama environment
+        if (typeof window.PG_BRIDGE !== 'undefined') {
+            bridge = window.PG_BRIDGE;
+            isPlaygamaEnvironment = true;
+            
+            // Initialize bridge according to SDK docs
+            await bridge.initialize();
+            
+            // Send mandatory game_ready message
+            await bridge.platform.sendMessage("game_ready");
+            console.log('Playgama SDK initialized successfully');
+            return true;
+        } else {
+            console.log('Not running in Playgama environment, SDK features will be disabled');
+            return false;
         }
-
-        // Get player information if authorized
-        if (bridge.player.isAuthorized) {
-            const playerInfo = {
-                id: bridge.player.id,
-                name: bridge.player.name,
-                photos: bridge.player.photos
-            };
-            console.log('Player info:', playerInfo);
-
-            // Update UI with player info if available
-            if (playerInfo.name) {
-                const playerNameDisplay = document.createElement('div');
-                playerNameDisplay.className = 'player-info';
-                playerNameDisplay.innerHTML = `
-                    <span class="player-name">${playerInfo.name}</span>
-                    ${playerInfo.photos.length > 0 ? 
-                        `<img src="${playerInfo.photos[0]}" alt="Player avatar" class="player-avatar">` 
-                        : ''}
-                `;
-                document.querySelector('header').appendChild(playerNameDisplay);
-            }
-        }
-
-        // Set up banner ad state listener
-        bridge.advertisement.on(bridge.EVENT_NAME.BANNER_STATE_CHANGED, state => {
-            console.log('Banner state:', state);
-        });
-
     } catch (error) {
         console.error('Error initializing Playgama SDK:', error);
+        return false;
     }
 }
 
@@ -1311,6 +1277,17 @@ export class WordShiftGame {
 }
 
 // Initialize game when page loads
-document.addEventListener('DOMContentLoaded', () => {
-    window.game = new WordShiftGame();
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        // Initialize Playgama SDK first and wait for it
+        const sdkInitialized = await initializePlaygama();
+        console.log('SDK initialization result:', sdkInitialized);
+        
+        // Then initialize the game
+        window.game = new WordShiftGame();
+    } catch (error) {
+        console.error('Error during initialization:', error);
+        // Still try to initialize the game even if SDK fails
+        window.game = new WordShiftGame();
+    }
 });
