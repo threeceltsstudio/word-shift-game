@@ -1,3 +1,6 @@
+// Import word lists
+import WORD_LISTS from './wordlist.js';
+
 // Audio Manager Class
 class AudioManager {
     constructor() {
@@ -117,6 +120,49 @@ async function initializePlaygama() {
         await bridge.platform.sendMessage("game_ready");
         console.log('Playgama SDK initialized successfully');
 
+        // Get device type and adjust UI if needed
+        const deviceType = bridge.device.type;
+        document.body.classList.add(`device-${deviceType}`);
+        console.log('Device type:', deviceType);
+
+        // Check authorization support
+        if (bridge.player.isAuthorizationSupported) {
+            // Try to authorize player
+            try {
+                const options = {};
+                if (bridge.platform.id === 'yandex') {
+                    options.scopes = true; // Request name and photo access
+                }
+                await bridge.player.authorize(options);
+                console.log('Player authorized successfully');
+            } catch (error) {
+                console.log('Player authorization failed:', error);
+            }
+        }
+
+        // Get player information if authorized
+        if (bridge.player.isAuthorized) {
+            const playerInfo = {
+                id: bridge.player.id,
+                name: bridge.player.name,
+                photos: bridge.player.photos
+            };
+            console.log('Player info:', playerInfo);
+
+            // Update UI with player info if available
+            if (playerInfo.name) {
+                const playerNameDisplay = document.createElement('div');
+                playerNameDisplay.className = 'player-info';
+                playerNameDisplay.innerHTML = `
+                    <span class="player-name">${playerInfo.name}</span>
+                    ${playerInfo.photos.length > 0 ? 
+                        `<img src="${playerInfo.photos[0]}" alt="Player avatar" class="player-avatar">` 
+                        : ''}
+                `;
+                document.querySelector('header').appendChild(playerNameDisplay);
+            }
+        }
+
         // Set up banner ad state listener
         bridge.advertisement.on(bridge.EVENT_NAME.BANNER_STATE_CHANGED, state => {
             console.log('Banner state:', state);
@@ -127,25 +173,29 @@ async function initializePlaygama() {
     }
 }
 
-class WordShiftGame {
+export class WordShiftGame {
     constructor() {
         // Initialize game configuration first
         this.config = {
-            startingTime: 60,
+            startingTime: 30,
             timeBonus: 10,
             hintPenalty: 15,
             wordsPerLevel: 5,
             startWordLength: 4
         };
 
-        // Initialize empty word lists
-        this.wordLists = {
-            4: [],
-            5: [],
-            6: [],
-            7: [],
-            8: []
+        // Initialize leaderboard support flags
+        this.leaderboardSupport = {
+            isSupported: false,
+            isNativePopupSupported: false,
+            isMultipleBoardsSupported: false,
+            isSetScoreSupported: false,
+            isGetScoreSupported: false,
+            isGetEntriesSupported: false
         };
+
+        // Initialize word lists directly
+        this.wordLists = WORD_LISTS;
 
         // Initialize high score
         this.highScore = {
@@ -156,20 +206,156 @@ class WordShiftGame {
         // Initialize audio manager
         this.audio = new AudioManager();
         
+        // Initialize drag state
+        this.dragState = {
+            isDragging: false,
+            startX: 0,
+            currentTile: null,
+            originalIndex: -1,
+            moveDirection: null // Will be set to 'left' or 'right' based on drag
+        };
+        
+        // Set up interstitial ad handling
+        if (bridge && bridge.advertisement) {
+            // Track interstitial state
+            bridge.advertisement.on(
+                bridge.EVENT_NAME.INTERSTITIAL_STATE_CHANGED,
+                state => {
+                    switch (state) {
+                        case 'opened':
+                            // Mute game sounds when ad opens
+                            this.audio.isSoundEnabled = false;
+                            this.audio.updateSoundButtonIcon();
+                            break;
+                        case 'closed':
+                        case 'failed':
+                            // Restore sound state when ad closes or fails
+                            this.audio.isSoundEnabled = true;
+                            this.audio.updateSoundButtonIcon();
+                            break;
+                    }
+                }
+            );
+        }
+        
         // Cache DOM elements
         this.cacheDOM();
         
         // Hide modals initially
         this.hideModals();
         
+        // Set up social feature availability
+        this.setupSocialFeatures();
+        
         // Set up event listeners
         this.setupEventListeners();
 
         // Initialize game state
-        this.isGameOver = false;
+        this.initializeGameState();
 
         // Initialize game
-        this.initializeGame();
+        this.loadWords();
+    }
+
+    cacheDOM() {
+        this.wordContainer = document.querySelector('.word-container');
+        this.levelCounter = document.getElementById('level-counter');
+        this.moveCounter = document.getElementById('move-counter');
+        this.timerDisplay = document.getElementById('timer');
+        this.hintButton = document.getElementById('hint-btn');
+        this.solveButton = document.getElementById('solve-btn');
+        this.gameOverModal = document.getElementById('game-over');
+        this.levelUpModal = document.getElementById('level-up');
+        this.finalLevelDisplay = document.getElementById('final-level');
+        this.finalMovesDisplay = document.getElementById('final-moves');
+        this.highScoreLevelDisplay = document.getElementById('high-score-level');
+        this.highScoreMovesDisplay = document.getElementById('high-score-moves');
+        this.wordLengthDisplay = document.getElementById('word-length');
+        this.playAgainButton = document.getElementById('play-again-btn');
+        this.shareScoreButton = document.getElementById('share-score-btn');
+        this.rateGameButton = document.getElementById('rate-game-btn');
+        this.addFavoriteButton = document.getElementById('add-favorite-btn');
+        this.addHomeButton = document.getElementById('add-home-btn');
+
+        // Verify all required elements are found
+        if (!this.playAgainButton) {
+            console.error('Play again button not found!');
+        }
+        if (!this.gameOverModal) {
+            console.error('Game over modal not found!');
+        }
+    }
+
+    setupSocialFeatures() {
+        // Check which social features are supported
+        if (bridge && bridge.social) {
+            // Share support
+            if (!bridge.social.isShareSupported) {
+                this.shareScoreButton.style.display = 'none';
+            }
+
+            // Rate support
+            if (!bridge.social.isRateSupported) {
+                this.rateGameButton.style.display = 'none';
+            }
+
+            // Add to favorites support
+            if (!bridge.social.isAddToFavoritesSupported) {
+                this.addFavoriteButton.style.display = 'none';
+            }
+
+            // Add to home screen support
+            if (!bridge.social.isAddToHomeScreenSupported) {
+                this.addHomeButton.style.display = 'none';
+            }
+        } else {
+            // Hide all social buttons if bridge.social is not available
+            this.shareScoreButton.style.display = 'none';
+            this.rateGameButton.style.display = 'none';
+            this.addFavoriteButton.style.display = 'none';
+            this.addHomeButton.style.display = 'none';
+        }
+    }
+
+    setupEventListeners() {
+        // Mouse events for drag and drop
+        this.wordContainer.addEventListener('mousedown', (e) => this.handleDragStart(e));
+        document.addEventListener('mousemove', (e) => this.handleDragMove(e));
+        document.addEventListener('mouseup', (e) => this.handleDragEnd(e));
+
+        // Touch events for mobile
+        this.wordContainer.addEventListener('touchstart', (e) => this.handleDragStart(e));
+        document.addEventListener('touchmove', (e) => this.handleDragMove(e));
+        document.addEventListener('touchend', (e) => this.handleDragEnd(e));
+
+        // Add other event listeners
+        this.hintButton.addEventListener('click', () => this.useHint());
+        this.solveButton.addEventListener('click', () => this.showSolveAd());
+        this.playAgainButton.addEventListener('click', () => this.startNewGame());
+        this.shareScoreButton.addEventListener('click', () => this.shareScore());
+        this.rateGameButton.addEventListener('click', () => this.handleRateGame());
+        this.addFavoriteButton.addEventListener('click', () => this.handleAddToFavorites());
+        this.addHomeButton.addEventListener('click', () => this.handleAddToHomeScreen());
+    }
+
+    initializeGameState() {
+        this.level = 1;
+        this.moves = 0;
+        this.timeLeft = this.config.startingTime;
+        this.currentWord = '';
+        this.scrambledWord = '';
+        this.wordLength = this.config.startWordLength;
+        this.hintsUsed = 0;
+        this.isGameOver = false;
+        
+        // Start the timer when initializing game state
+        this.startTimer();
+    }
+
+    hideModals() {
+        // Hide all modals
+        this.gameOverModal.classList.add('hidden');
+        this.levelUpModal.classList.add('hidden');
     }
 
     async initializeGame() {
@@ -237,6 +423,19 @@ class WordShiftGame {
             // Load words and start game
             await this.loadWords();
             this.startNewGame();
+
+            // Check leaderboard support
+            if (bridge && bridge.leaderboard) {
+                this.leaderboardSupport = {
+                    isSupported: bridge.leaderboard.isSupported,
+                    isNativePopupSupported: bridge.leaderboard.isNativePopupSupported,
+                    isMultipleBoardsSupported: bridge.leaderboard.isMultipleBoardsSupported,
+                    isSetScoreSupported: bridge.leaderboard.isSetScoreSupported,
+                    isGetScoreSupported: bridge.leaderboard.isGetScoreSupported,
+                    isGetEntriesSupported: bridge.leaderboard.isGetEntriesSupported
+                };
+                console.log('Leaderboard support:', this.leaderboardSupport);
+            }
 
         } catch (error) {
             console.error('Error initializing game:', error);
@@ -335,229 +534,43 @@ class WordShiftGame {
     async loadWords() {
         try {
             // Show loading state
-            this.wordContainer.innerHTML = '<div class="loading">Loading words...</div>';
-            
-            // Fetch the large word list
-            const response = await fetch('https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt');
-            const text = await response.text();
-            const allWords = text.split('\n').map(word => word.trim().toUpperCase());
-            
-            // Filter and categorize words
-            this.wordLists = {
-                4: [],
-                5: [],
-                6: [],
-                7: [],
-                8: []
-            };
+            this.wordContainer.innerHTML = `
+                <div class="loading">
+                    <div class="loading-text">Loading word dictionary...</div>
+                </div>`;
 
-            // Helper function to check if a word is appropriate for the game
-            const isAppropriateWord = word => {
-                // Only include words with standard letters
-                if (!/^[A-Z]+$/.test(word)) return false;
-                
-                // Exclude very uncommon words (you might want to add more rules)
-                const commonPrefixes = ['UN', 'RE', 'IN', 'IM', 'DIS', 'EN', 'EM', 'PRE'];
-                const commonSuffixes = ['ING', 'ED', 'LY', 'TION', 'ABLE', 'IBLE', 'FUL', 'NESS'];
-                
-                // Check if word has common affixes
-                const hasCommonAffix = commonPrefixes.some(prefix => word.startsWith(prefix)) ||
-                                     commonSuffixes.some(suffix => word.endsWith(suffix));
-                
-                return hasCommonAffix;
-            };
-
-            // Categorize words by length
-            allWords.forEach(word => {
-                const length = word.length;
-                if (length >= 4 && length <= 8 && isAppropriateWord(word)) {
-                    this.wordLists[length].push(word);
-                }
+            // Log word counts by length
+            Object.entries(this.wordLists).forEach(([length, words]) => {
+                console.log(`${length} letters: ${words.length} words`);
             });
 
-            // Limit each category to 1000 words
-            for (let length in this.wordLists) {
-                if (this.wordLists[length].length > 1000) {
-                    // Shuffle and take first 1000
-                    this.wordLists[length] = this.shuffleArray(this.wordLists[length]).slice(0, 1000);
-                }
-            }
-
-            // Log word counts for verification
-            console.log('Word counts by length:', Object.fromEntries(
-                Object.entries(this.wordLists).map(([length, words]) => [length, words.length])
-            ));
+            // Start game immediately since words are already loaded
+            this.selectNewWord();
 
         } catch (error) {
             console.error('Error loading words:', error);
-            // Fallback to basic word list if fetch fails
-            this.wordLists = {
-                4: ['PLAY', 'GAME', 'WORD', 'TIME', 'HINT', 'JUMP', 'QUIZ', 'WORK', 'LOVE', 'LIFE', 'HOME', 'BOOK', 'MIND', 'HELP', 'TEAM'],
-                5: ['SHIFT', 'LEVEL', 'GAMES', 'SCORE', 'BONUS', 'TIMER', 'HAPPY', 'WORLD', 'MUSIC', 'DANCE', 'LEARN', 'DREAM', 'SMILE', 'PEACE'],
-                6: ['PLAYER', 'PUZZLE', 'GAMING', 'POINTS', 'LETTER', 'WONDER', 'SIMPLE', 'FRIEND', 'FAMILY', 'NATURE', 'WISDOM', 'CHANGE'],
-                7: ['PLAYING', 'GAMING', 'SHUFFLE', 'CORRECT', 'PRESENT', 'JOURNEY', 'HARMONY', 'EXPLORE', 'ACHIEVE', 'INSPIRE', 'IMAGINE'],
-                8: ['COMPLETE', 'SCRAMBLE', 'KEYBOARD', 'POSITION', 'DISCOVER', 'PROGRESS', 'LEARNING', 'CREATIVE', 'TOGETHER', 'ADVENTURE']
-            };
+            this.wordContainer.innerHTML = `
+                <div class="loading error">
+                    <div class="loading-text">Error loading dictionary</div>
+                </div>`;
         }
-    }
-
-    shuffleArray(array) {
-        for (let i = array.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [array[i], array[j]] = [array[j], array[i]];
-        }
-        return array;
-    }
-
-    initializeGameState() {
-        this.level = 1;
-        this.moves = 0;
-        this.timeLeft = this.config.startingTime;
-        this.currentWord = '';
-        this.scrambledWord = '';
-        this.wordLength = this.config.startWordLength;
-        this.hintsUsed = 0;
-        this.isGameOver = false;
-    }
-
-    cacheDOM() {
-        this.wordContainer = document.querySelector('.word-container');
-        this.levelCounter = document.getElementById('level-counter');
-        this.moveCounter = document.getElementById('move-counter');
-        this.timerDisplay = document.getElementById('timer');
-        this.hintButton = document.getElementById('hint-btn');
-        this.solveButton = document.getElementById('solve-btn');
-        this.gameOverModal = document.getElementById('game-over');
-        this.levelUpModal = document.getElementById('level-up');
-        this.finalLevelDisplay = document.getElementById('final-level');
-        this.finalMovesDisplay = document.getElementById('final-moves');
-        this.highScoreLevelDisplay = document.getElementById('high-score-level');
-        this.highScoreMovesDisplay = document.getElementById('high-score-moves');
-        this.wordLengthDisplay = document.getElementById('word-length');
-        this.playAgainButton = document.getElementById('play-again-btn');
-        this.shareScoreButton = document.getElementById('share-score-btn');
-
-        // Verify all required elements are found
-        if (!this.playAgainButton) {
-            console.error('Play again button not found!');
-        }
-        if (!this.gameOverModal) {
-            console.error('Game over modal not found!');
-        }
-    }
-
-    setupEventListeners() {
-        // Handle letter tile interactions
-        this.wordContainer.addEventListener('click', (e) => {
-            if (!this.isGameOver && e.target.classList.contains('letter-tile')) {
-                const direction = e.shiftKey ? -1 : 1;
-                this.moveLetter(parseInt(e.target.dataset.index), direction);
-            }
-        });
-
-        // Touch support
-        let touchStartX = 0;
-        this.wordContainer.addEventListener('touchstart', (e) => {
-            if (e.target.classList.contains('letter-tile')) {
-                touchStartX = e.touches[0].clientX;
-            }
-        });
-
-        this.wordContainer.addEventListener('touchend', (e) => {
-            if (!this.isGameOver && e.target.classList.contains('letter-tile')) {
-                const touchEndX = e.changedTouches[0].clientX;
-                const direction = touchEndX < touchStartX ? -1 : 1;
-                this.moveLetter(parseInt(e.target.dataset.index), direction);
-            }
-        });
-
-        // Button handlers
-        this.hintButton.addEventListener('click', () => this.useHint());
-        this.solveButton.addEventListener('click', () => this.showSolveAd());
-        this.playAgainButton.addEventListener('click', () => this.startNewGame());
-        this.shareScoreButton.addEventListener('click', () => this.shareScore());
-    }
-
-    startNewGame() {
-        // Clear any existing game state
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
-        }
-        
-        this.initializeGameState();
-        this.updateDisplay();
-        this.selectNewWord();
-        this.startTimer();
-        
-        // Ensure modals are hidden
-        this.hideModals();
-        
-        // Signal gameplay started
-        if (bridge && bridge.platform) {
-            bridge.platform.sendMessage("gameplay_started");
-        }
-        
-        // Show banner at game start
-        if (this.bannerSupported && bridge && bridge.advertisement) {
-            this.showBanner();
-        }
-    }
-
-    startTimer() {
-        console.log('Starting timer with time:', this.timeLeft);
-        
-        // Clear any existing timer
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
-        }
-        
-        // Start new timer
-        this.timerInterval = setInterval(() => {
-            console.log('Timer tick, time left:', this.timeLeft);
-            
-            if (this.isGameOver) {
-                console.log('Game is over, clearing timer');
-                clearInterval(this.timerInterval);
-                this.timerInterval = null;
-                return;
-            }
-
-            this.timeLeft--;
-            this.updateTimerDisplay();
-            
-            // Check if time is up
-            if (this.timeLeft <= 0) {
-                console.log('Time is up, ending game');
-                // Force time to 0 and update display
-                this.timeLeft = 0;
-                this.updateTimerDisplay();
-                
-                // Clear interval before ending game
-                clearInterval(this.timerInterval);
-                this.timerInterval = null;
-                
-                // End the game
-                this.endGame();
-            }
-        }, 1000);
     }
 
     selectNewWord() {
         // Select random word from appropriate list
         const wordList = this.wordLists[this.wordLength];
         if (!wordList || wordList.length === 0) {
-            // Fallback if no words available
-            this.currentWord = 'FALLBACK'.slice(0, this.wordLength);
-        } else {
-            // Make sure we don't get the same word twice in a row
-            let newWord;
-            do {
-                newWord = wordList[Math.floor(Math.random() * wordList.length)];
-            } while (newWord === this.currentWord && wordList.length > 1);
-            this.currentWord = newWord;
+            console.error(`No words available for length ${this.wordLength}`);
+            return;
         }
+
+        // Make sure we don't get the same word twice in a row
+        let newWord;
+        do {
+            newWord = wordList[Math.floor(Math.random() * wordList.length)];
+        } while (newWord === this.currentWord && wordList.length > 1);
+        
+        this.currentWord = newWord;
         
         // Make sure the word is properly scrambled
         do {
@@ -581,39 +594,6 @@ class WordShiftGame {
         }
         
         return scrambled.join('');
-    }
-
-    createLetterTiles() {
-        this.wordContainer.innerHTML = '';
-        
-        this.scrambledWord.split('').forEach((letter, index) => {
-            const tile = document.createElement('div');
-            tile.className = 'letter-tile';
-            tile.textContent = letter;
-            tile.dataset.index = index;
-            this.wordContainer.appendChild(tile);
-        });
-    }
-
-    moveLetter(index, direction) {
-        const letters = this.scrambledWord.split('');
-        const newIndex = (index + direction + letters.length) % letters.length;
-        
-        // Play move sound
-        this.audio.play('move');
-        
-        [letters[index], letters[newIndex]] = [letters[newIndex], letters[index]];
-        this.scrambledWord = letters.join('');
-        
-        this.moves++;
-        this.updateDisplay();
-        this.createLetterTiles();
-        this.updateTileColors();
-        
-        // Check if word is complete
-        if (this.scrambledWord === this.currentWord) {
-            setTimeout(() => this.handleLevelComplete(), 500);
-        }
     }
 
     updateTileColors() {
@@ -689,10 +669,14 @@ class WordShiftGame {
 
     async showSolveAd() {
         try {
+            // Show interstitial before rewarded ad
+            if (bridge && bridge.advertisement) {
+                await bridge.advertisement.showInterstitial();
+            }
             // Show rewarded ad
             await bridge.advertisement.showRewarded();
         } catch (error) {
-            console.error('Error showing rewarded ad:', error);
+            console.error('Error showing ads:', error);
             // Fallback to regular solve if ad fails
             this.solveWord();
         }
@@ -726,6 +710,11 @@ class WordShiftGame {
         this.wordLength = this.config.startWordLength + Math.floor((this.level - 1) / this.config.wordsPerLevel);
         this.wordLength = Math.min(this.wordLength, 8); // Cap at 8 letters
         
+        // Show interstitial every 5 levels
+        if (this.level % 5 === 0 && bridge && bridge.advertisement) {
+            bridge.advertisement.showInterstitial();
+        }
+        
         // Update display
         this.updateDisplay();
         
@@ -745,12 +734,6 @@ class WordShiftGame {
         }, 2000);
     }
 
-    hideModals() {
-        // Ensure both modals are properly hidden
-        this.gameOverModal.classList.add('hidden');
-        this.levelUpModal.classList.add('hidden');
-    }
-
     endGame() {
         console.log('Entering endGame function');
         
@@ -763,6 +746,11 @@ class WordShiftGame {
         
         // Set game over state first
         this.isGameOver = true;
+
+        // Show interstitial at game over
+        if (bridge && bridge.advertisement) {
+            bridge.advertisement.showInterstitial();
+        }
         
         // Calculate stats
         const totalWordsCompleted = ((this.level - 1) * this.config.wordsPerLevel);
@@ -826,6 +814,10 @@ class WordShiftGame {
             if (this.bannerSupported && bridge && bridge.advertisement) {
                 bridge.advertisement.hideBanner();
             }
+
+            // Submit score to leaderboard
+            this.submitScore();
+
         } catch (error) {
             console.error('Error in endGame:', error);
         }
@@ -902,22 +894,38 @@ class WordShiftGame {
                          `🏆 High Score: Level ${this.highScore.level}\n` +
                          `🎮 Play Word Shift now!`;
 
-        try {
-            // Try native share first
-            if (navigator.share) {
-                await navigator.share({
-                    title: 'Word Shift Score',
-                    text: shareText
-                });
-                return;
-            }
-        } catch (error) {
-            console.error('Error sharing:', error);
-        }
+        if (bridge && bridge.social && bridge.social.isShareSupported) {
+            try {
+                const options = {};
+                
+                switch (bridge.platform.id) {
+                    case 'vk':
+                        options.link = window.location.href;
+                        break;
+                    case 'facebook':
+                    case 'msn':
+                        options.title = 'Word Shift Score';
+                        options.text = shareText;
+                        // You would need to generate or have a sharing image
+                        // options.image = 'base64 or URL of sharing image';
+                        break;
+                }
 
+                await bridge.social.share(options);
+                console.log('Score shared successfully');
+            } catch (error) {
+                console.error('Error sharing score:', error);
+                this.fallbackShare(shareText);
+            }
+        } else {
+            this.fallbackShare(shareText);
+        }
+    }
+
+    fallbackShare(shareText) {
         // Fallback to clipboard
         try {
-            await navigator.clipboard.writeText(shareText);
+            navigator.clipboard.writeText(shareText);
             
             // Show temporary success message
             const originalText = this.shareScoreButton.innerHTML;
@@ -931,9 +939,378 @@ class WordShiftGame {
             alert('Could not share score. Please try again.');
         }
     }
+
+    async handleRateGame() {
+        if (bridge && bridge.social && bridge.social.isRateSupported) {
+            try {
+                await bridge.social.rate();
+                // Hide the rate button after successful rating
+                this.rateGameButton.style.display = 'none';
+            } catch (error) {
+                console.error('Error rating game:', error);
+            }
+        }
+    }
+
+    async handleAddToFavorites() {
+        if (bridge && bridge.social && bridge.social.isAddToFavoritesSupported) {
+            try {
+                await bridge.social.addToFavorites();
+                // Show success message
+                const originalText = this.addFavoriteButton.innerHTML;
+                this.addFavoriteButton.innerHTML = '<i class="fas fa-check"></i> Added!';
+                setTimeout(() => {
+                    this.addFavoriteButton.innerHTML = originalText;
+                }, 2000);
+            } catch (error) {
+                console.error('Error adding to favorites:', error);
+            }
+        }
+    }
+
+    async handleAddToHomeScreen() {
+        if (bridge && bridge.social && bridge.social.isAddToHomeScreenSupported) {
+            try {
+                await bridge.social.addToHomeScreen();
+                // Show success message
+                const originalText = this.addHomeButton.innerHTML;
+                this.addHomeButton.innerHTML = '<i class="fas fa-check"></i> Added!';
+                setTimeout(() => {
+                    this.addHomeButton.innerHTML = originalText;
+                }, 2000);
+            } catch (error) {
+                console.error('Error adding to home screen:', error);
+            }
+        }
+    }
+
+    createLetterTiles() {
+        this.wordContainer.innerHTML = '';
+        
+        this.scrambledWord.split('').forEach((letter, index) => {
+            const tile = document.createElement('div');
+            tile.className = 'letter-tile';
+            tile.textContent = letter;
+            tile.dataset.index = index;
+            tile.style.touchAction = 'none'; // Prevent scrolling while dragging on mobile
+            this.wordContainer.appendChild(tile);
+        });
+    }
+
+    handleDragStart(e) {
+        const target = e.target.closest('.letter-tile');
+        if (!target || this.isGameOver) return;
+
+        e.preventDefault(); // Prevent text selection
+        
+        const touch = e.touches ? e.touches[0] : e;
+        const index = parseInt(target.dataset.index);
+        
+        this.dragState = {
+            isDragging: true,
+            startX: touch.clientX,
+            currentTile: target,
+            originalIndex: index,
+            moveDirection: null // Will be set to 'left' or 'right' based on drag
+        };
+
+        target.classList.add('dragging');
+    }
+
+    handleDragMove(e) {
+        if (!this.dragState.isDragging) return;
+        e.preventDefault();
+
+        const touch = e.touches ? e.touches[0] : e;
+        const deltaX = touch.clientX - this.dragState.startX;
+        const tile = this.dragState.currentTile;
+        const index = this.dragState.originalIndex;
+        
+        // Determine direction based on drag
+        if (Math.abs(deltaX) > 10) { // Small threshold to determine intent
+            if (deltaX < 0 && index > 0) {
+                // Moving left
+                if (this.dragState.moveDirection !== 'left') {
+                    this.dragState.moveDirection = 'left';
+                    tile.style.transform = 'translateX(-100%)';
+                    // Show target position
+                    const prevTile = this.wordContainer.children[index - 1];
+                    prevTile.classList.add('potential-swap');
+                }
+            } else if (deltaX > 0 && index < this.scrambledWord.length - 1) {
+                // Moving right
+                if (this.dragState.moveDirection !== 'right') {
+                    this.dragState.moveDirection = 'right';
+                    tile.style.transform = 'translateX(100%)';
+                    // Show target position
+                    const nextTile = this.wordContainer.children[index + 1];
+                    nextTile.classList.add('potential-swap');
+                }
+            }
+        } else {
+            // Reset if movement is too small
+            this.dragState.moveDirection = null;
+            tile.style.transform = '';
+            Array.from(this.wordContainer.children).forEach(t => t.classList.remove('potential-swap'));
+        }
+    }
+
+    handleDragEnd(e) {
+        if (!this.dragState.isDragging) return;
+        
+        const tile = this.dragState.currentTile;
+        const index = this.dragState.originalIndex;
+        
+        // Remove visual states
+        tile.classList.remove('dragging');
+        tile.style.transform = '';
+        Array.from(this.wordContainer.children).forEach(t => t.classList.remove('potential-swap'));
+        
+        // Perform swap if we have a direction
+        if (this.dragState.moveDirection === 'left' && index > 0) {
+            this.swapTiles(index, index - 1);
+        } else if (this.dragState.moveDirection === 'right' && index < this.scrambledWord.length - 1) {
+            this.swapTiles(index, index + 1);
+        }
+        
+        // Reset drag state
+        this.dragState = {
+            isDragging: false,
+            startX: 0,
+            currentTile: null,
+            originalIndex: -1,
+            moveDirection: null
+        };
+    }
+
+    swapTiles(fromIndex, toIndex) {
+        // Update the scrambled word
+        const letters = this.scrambledWord.split('');
+        [letters[fromIndex], letters[toIndex]] = [letters[toIndex], letters[fromIndex]];
+        this.scrambledWord = letters.join('');
+        
+        // Play move sound
+        this.audio.play('move');
+        
+        // Increment moves counter
+        this.moves++;
+        this.updateDisplay();
+        
+        // Update tiles
+        const tiles = this.wordContainer.children;
+        const fromTile = tiles[fromIndex];
+        const toTile = tiles[toIndex];
+        
+        // Swap content
+        const tempText = fromTile.textContent;
+        fromTile.textContent = toTile.textContent;
+        toTile.textContent = tempText;
+        
+        // Update colors
+        this.updateTileColors();
+        
+        // Check if word is complete
+        if (this.scrambledWord === this.currentWord) {
+            setTimeout(() => this.handleLevelComplete(), 500);
+        }
+    }
+
+    startTimer() {
+        // Clear any existing timer
+        if (this.timerInterval) {
+            clearInterval(this.timerInterval);
+        }
+        
+        // Start new timer
+        this.timerInterval = setInterval(() => {
+            this.timeLeft--;
+            this.updateTimerDisplay();
+            
+            // Check for game over
+            if (this.timeLeft <= 0) {
+                this.endGame();
+            }
+        }, 1000);
+    }
+
+    startNewGame() {
+        // Hide game over modal
+        this.hideModals();
+        
+        // Initialize game state
+        this.initializeGameState();
+        
+        // Reset display
+        this.updateDisplay();
+        
+        // Select first word
+        this.selectNewWord();
+        
+        // Show banner if supported
+        if (this.bannerSupported && bridge && bridge.advertisement) {
+            this.showBanner();
+        }
+    }
+
+    async submitScore() {
+        if (!this.leaderboardSupport.isSetScoreSupported) return;
+
+        try {
+            let options = {};
+            const score = this.level * 1000 + Math.max(0, 1000 - this.moves);
+
+            switch (bridge.platform.id) {
+                case 'yandex':
+                    options = {
+                        leaderboardName: 'word_shift_scores',
+                        score: score
+                    };
+                    break;
+                case 'facebook':
+                    options = {
+                        leaderboardName: 'word_shift_scores',
+                        score: score
+                    };
+                    break;
+                case 'msn':
+                    options = {
+                        score: score
+                    };
+                    break;
+                case 'lagged':
+                    options = {
+                        boardId: 'word_shift_scores',
+                        score: score
+                    };
+                    break;
+                case 'y8':
+                    options = {
+                        table: 'word_shift_scores',
+                        points: score
+                    };
+                    break;
+            }
+
+            await bridge.leaderboard.setScore(options);
+            console.log('Score submitted successfully:', score);
+        } catch (error) {
+            console.error('Error submitting score:', error);
+        }
+    }
+
+    async showLeaderboard() {
+        if (!this.leaderboardSupport.isSupported) return;
+
+        try {
+            // Try native popup first if supported
+            if (this.leaderboardSupport.isNativePopupSupported) {
+                let options = {};
+                if (bridge.platform.id === 'y8') {
+                    options = {
+                        table: 'word_shift_scores'
+                    };
+                }
+                await bridge.leaderboard.showNativePopup(options);
+                return;
+            }
+
+            // Fallback to getting entries and showing custom leaderboard
+            if (this.leaderboardSupport.isGetEntriesSupported) {
+                let options = {};
+                switch (bridge.platform.id) {
+                    case 'yandex':
+                        options = {
+                            leaderboardName: 'word_shift_scores',
+                            includeUser: true,
+                            quantityAround: 10,
+                            quantityTop: 10
+                        };
+                        break;
+                    case 'facebook':
+                        options = {
+                            leaderboardName: 'word_shift_scores',
+                            count: 10,
+                            offset: 0
+                        };
+                        break;
+                    case 'y8':
+                        options = {
+                            table: 'word_shift_scores',
+                            perPage: 10,
+                            page: 1,
+                            mode: 'alltime'
+                        };
+                        break;
+                }
+
+                const entries = await bridge.leaderboard.getEntries(options);
+                this.displayLeaderboard(entries);
+            }
+        } catch (error) {
+            console.error('Error showing leaderboard:', error);
+        }
+    }
+
+    displayLeaderboard(entries) {
+        // Create leaderboard modal if it doesn't exist
+        let leaderboardModal = document.getElementById('leaderboard-modal');
+        if (!leaderboardModal) {
+            leaderboardModal = document.createElement('div');
+            leaderboardModal.id = 'leaderboard-modal';
+            leaderboardModal.className = 'modal';
+            document.body.appendChild(leaderboardModal);
+        }
+
+        // Build leaderboard HTML
+        let html = `
+            <div class="modal-content">
+                <h2>Leaderboard</h2>
+                <div class="leaderboard-entries">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Player</th>
+                                <th>Score</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+
+        entries.forEach(entry => {
+            const playerName = entry.name || entry.playerName || entry.playername || 'Anonymous';
+            const score = entry.score || entry.points || 0;
+            const rank = entry.rank || '#';
+
+            html += `
+                <tr${entry.isCurrentPlayer ? ' class="current-player"' : ''}>
+                    <td>${rank}</td>
+                    <td>${playerName}</td>
+                    <td>${score}</td>
+                </tr>
+            `;
+        });
+
+        html += `
+                        </tbody>
+                    </table>
+                </div>
+                <button class="btn close-btn">Close</button>
+            </div>
+        `;
+
+        leaderboardModal.innerHTML = html;
+        leaderboardModal.classList.remove('hidden');
+
+        // Add close button handler
+        const closeBtn = leaderboardModal.querySelector('.close-btn');
+        closeBtn.addEventListener('click', () => {
+            leaderboardModal.classList.add('hidden');
+        });
+    }
 }
 
 // Initialize game when page loads
 document.addEventListener('DOMContentLoaded', () => {
-    new WordShiftGame();
-}); 
+    window.game = new WordShiftGame();
+});

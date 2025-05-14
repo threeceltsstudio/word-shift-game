@@ -15,9 +15,12 @@
             <div class="game-stats">
                 <div class="level-display">Level <span id="level-counter">1</span></div>
                 <div class="timer" title="Time remaining">
-                    <span id="timer">60</span>s
+                    <span id="timer">30</span>s
                 </div>
                 <div class="moves">Moves: <span id="move-counter">0</span></div>
+                <button id="leaderboard-btn" class="btn" title="View Leaderboard">
+                    <i class="fas fa-trophy"></i>
+                </button>
             </div>
         </header>
 
@@ -40,11 +43,11 @@
         </div>
 
         <div class="instructions">
-            <p>Tap a letter to move it right. Shift + tap to move left.</p>
-            <p class="color-guide">
-                <span class="color-dot correct">●</span> Correct position
-                <span class="color-dot present">●</span> Wrong position
-            </p>
+            <p>Drag letters left or right to unscramble the word before time runs out!</p>
+            <div class="color-guide">
+                <span><i class="fas fa-circle color-dot correct"></i> Correct position</span>
+                <span><i class="fas fa-circle color-dot present"></i> Wrong position</span>
+            </div>
         </div>
 
         <div id="game-over" class="modal hidden">
@@ -60,6 +63,20 @@
                         Share Score
                     </button>
                 </div>
+                <div class="social-buttons">
+                    <button id="rate-game-btn" class="btn social-btn">
+                        <i class="fas fa-star"></i>
+                        Rate Game
+                    </button>
+                    <button id="add-favorite-btn" class="btn social-btn">
+                        <i class="fas fa-heart"></i>
+                        Add to Favorites
+                    </button>
+                    <button id="add-home-btn" class="btn social-btn">
+                        <i class="fas fa-home"></i>
+                        Add to Home
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -71,6 +88,6 @@
             </div>
         </div>
     </div>
-    <script src="game.js"></script>
+    <script type="module" src="game.js"></script>
 </body>
 </html> 
