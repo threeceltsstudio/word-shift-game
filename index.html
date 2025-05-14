@@ -7,6 +7,7 @@
     <script src="./playgama-bridge.js"></script>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
 </head>
 <body>
     <div class="game-container">
@@ -18,9 +19,6 @@
                     <span id="timer">30</span>s
                 </div>
                 <div class="moves">Moves: <span id="move-counter">0</span></div>
-                <button id="leaderboard-btn" class="btn" title="View Leaderboard">
-                    <i class="fas fa-trophy"></i>
-                </button>
             </div>
         </header>
 
@@ -49,6 +47,9 @@
                 <span><i class="fas fa-circle color-dot present"></i> Wrong position</span>
             </div>
         </div>
+
+        <!-- Banner ad container -->
+        <div id="banner-container" style="width: 728px; height: 90px; margin: 20px auto 0; display: flex; justify-content: center; align-items: center;"></div>
 
         <div id="game-over" class="modal hidden">
             <div class="modal-content">

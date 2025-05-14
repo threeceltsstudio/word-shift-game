@@ -1,41 +1,8 @@
 // Import word lists
 import WORD_LISTS from './wordlist.js';
 
-// Initialize Playgama SDK
-let bridge = window['playgama']?.bridge;
-let isPlaygamaEnvironment = false;
-
-// Listen for bridge to become available
-window.addEventListener('playgamaBridgeReady', () => {
-    bridge = window['playgama']?.bridge;
-    // Reinitialize if game is already running
-    if (window.game) {
-        initializePlaygama().then(result => {
-            console.log('Bridge ready, reinitialized with result:', result);
-        });
-    }
-});
-
-async function initializePlaygama() {
-    bridge = window['playgama']?.bridge;
-    if (!bridge) {
-        console.warn('Playgama bridge not found. Running outside Playgama environment.');
-        isPlaygamaEnvironment = false;
-        return false;
-    }
-
-    try {
-        await bridge.initialize();
-        isPlaygamaEnvironment = true;
-        await bridge.platform.sendMessage("game_ready");
-        console.log('Playgama SDK initialized successfully');
-        return true;
-    } catch (error) {
-        console.error('Error initializing Playgama SDK:', error);
-        isPlaygamaEnvironment = false;
-        return false;
-    }
-}
+// Initialize CrazyGames SDK
+let sdk = window.CrazyGames?.SDK;
 
 // Audio Manager Class
 class AudioManager {
@@ -149,6 +116,8 @@ class AudioManager {
 
 export class WordShiftGame {
     constructor() {
+        console.log('Starting game initialization...');
+        
         // Initialize game configuration first
         this.config = {
             startingTime: 30,
@@ -157,28 +126,22 @@ export class WordShiftGame {
             wordsPerLevel: 5,
             startWordLength: 4
         };
-
-        // Initialize leaderboard support flags
-        this.leaderboardSupport = {
-            isSupported: false,
-            isNativePopupSupported: false,
-            isMultipleBoardsSupported: false,
-            isSetScoreSupported: false,
-            isGetScoreSupported: false,
-            isGetEntriesSupported: false
-        };
+        console.log('Game config initialized');
 
         // Initialize word lists directly
         this.wordLists = WORD_LISTS;
+        console.log('Word lists loaded:', Object.keys(this.wordLists).length, 'lengths available');
 
         // Initialize high score
         this.highScore = {
             level: 1,
             moves: 0
         };
+        console.log('High score initialized');
 
         // Initialize audio manager
         this.audio = new AudioManager();
+        console.log('Audio manager initialized');
         
         // Initialize drag state
         this.dragState = {
@@ -186,70 +149,104 @@ export class WordShiftGame {
             startX: 0,
             currentTile: null,
             originalIndex: -1,
-            moveDirection: null // Will be set to 'left' or 'right' based on drag
+            moveDirection: null
         };
-        
-        // Set up interstitial ad handling
-        if (bridge && bridge.advertisement) {
-            // Track interstitial state
-            bridge.advertisement.on(
-                bridge.EVENT_NAME.INTERSTITIAL_STATE_CHANGED,
-                state => {
-                    switch (state) {
-                        case 'opened':
-                            // Mute game sounds when ad opens
-                            this.audio.isSoundEnabled = false;
-                            this.audio.updateSoundButtonIcon();
-                            break;
-                        case 'closed':
-                        case 'failed':
-                            // Restore sound state when ad closes or fails
-                            this.audio.isSoundEnabled = true;
-                            this.audio.updateSoundButtonIcon();
-                            break;
-                    }
-                }
-            );
-        }
+        console.log('Drag state initialized');
+
+        // Initialize timer state
+        this.isPaused = false;
+        this.isLoading = true;
+        console.log('Timer state initialized, isLoading:', this.isLoading);
         
         // Cache DOM elements
         this.cacheDOM();
+        console.log('DOM elements cached');
         
         // Hide modals initially
         this.hideModals();
+        console.log('Modals hidden');
+
+        // Show loading state
+        console.log('Attempting to show loading state...');
+        console.log('Word container exists:', !!this.wordContainer);
+        if (this.wordContainer) {
+            this.wordContainer.innerHTML = `
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <div class="loading-text">Loading game...</div>
+                </div>`;
+            console.log('Loading state HTML set');
+        } else {
+            console.error('Word container not found!');
+        }
         
-        // Set up social feature availability
-        this.setupSocialFeatures();
+        // Disable all interactive elements
+        console.log('Attempting to disable buttons...');
+        console.log('Hint button exists:', !!this.hintButton);
+        console.log('Solve button exists:', !!this.solveButton);
+        if (this.hintButton) this.hintButton.disabled = true;
+        if (this.solveButton) this.solveButton.disabled = true;
+        console.log('Buttons disabled');
         
         // Set up event listeners
         this.setupEventListeners();
+        console.log('Event listeners set up');
 
         // Initialize game state
         this.initializeGameState();
+        console.log('Game state initialized');
 
         // Initialize game
-        this.loadWords();
+        console.log('Starting game initialization process...');
+        this.initializeGame();
     }
 
     cacheDOM() {
+        console.log('Starting DOM caching...');
         this.wordContainer = document.querySelector('.word-container');
+        console.log('Word container found:', !!this.wordContainer);
+        
         this.levelCounter = document.getElementById('level-counter');
+        console.log('Level counter found:', !!this.levelCounter);
+        
         this.moveCounter = document.getElementById('move-counter');
+        console.log('Move counter found:', !!this.moveCounter);
+        
         this.timerDisplay = document.getElementById('timer');
+        console.log('Timer display found:', !!this.timerDisplay);
+        
         this.hintButton = document.getElementById('hint-btn');
+        console.log('Hint button found:', !!this.hintButton);
+        
         this.solveButton = document.getElementById('solve-btn');
+        console.log('Solve button found:', !!this.solveButton);
+        
         this.gameOverModal = document.getElementById('game-over');
+        console.log('Game over modal found:', !!this.gameOverModal);
+        
         this.levelUpModal = document.getElementById('level-up');
+        console.log('Level up modal found:', !!this.levelUpModal);
+        
         this.finalLevelDisplay = document.getElementById('final-level');
+        console.log('Final level display found:', !!this.finalLevelDisplay);
+        
         this.finalMovesDisplay = document.getElementById('final-moves');
+        console.log('Final moves display found:', !!this.finalMovesDisplay);
+        
         this.highScoreLevelDisplay = document.getElementById('high-score-level');
+        console.log('High score level display found:', !!this.highScoreLevelDisplay);
+        
         this.highScoreMovesDisplay = document.getElementById('high-score-moves');
+        console.log('High score moves display found:', !!this.highScoreMovesDisplay);
+        
         this.wordLengthDisplay = document.getElementById('word-length');
+        console.log('Word length display found:', !!this.wordLengthDisplay);
+        
         this.playAgainButton = document.getElementById('play-again-btn');
+        console.log('Play again button found:', !!this.playAgainButton);
+        
         this.shareScoreButton = document.getElementById('share-score-btn');
-        this.rateGameButton = document.getElementById('rate-game-btn');
-        this.addFavoriteButton = document.getElementById('add-favorite-btn');
-        this.addHomeButton = document.getElementById('add-home-btn');
+        console.log('Share score button found:', !!this.shareScoreButton);
 
         // Verify all required elements are found
         if (!this.playAgainButton) {
@@ -258,37 +255,7 @@ export class WordShiftGame {
         if (!this.gameOverModal) {
             console.error('Game over modal not found!');
         }
-    }
-
-    setupSocialFeatures() {
-        // Check which social features are supported
-        if (bridge && bridge.social) {
-            // Share support
-            if (!bridge.social.isShareSupported) {
-                this.shareScoreButton.style.display = 'none';
-            }
-
-            // Rate support
-            if (!bridge.social.isRateSupported) {
-                this.rateGameButton.style.display = 'none';
-            }
-
-            // Add to favorites support
-            if (!bridge.social.isAddToFavoritesSupported) {
-                this.addFavoriteButton.style.display = 'none';
-            }
-
-            // Add to home screen support
-            if (!bridge.social.isAddToHomeScreenSupported) {
-                this.addHomeButton.style.display = 'none';
-            }
-        } else {
-            // Hide all social buttons if bridge.social is not available
-            this.shareScoreButton.style.display = 'none';
-            this.rateGameButton.style.display = 'none';
-            this.addFavoriteButton.style.display = 'none';
-            this.addHomeButton.style.display = 'none';
-        }
+        console.log('DOM caching complete');
     }
 
     setupEventListeners() {
@@ -307,9 +274,6 @@ export class WordShiftGame {
         this.solveButton.addEventListener('click', () => this.showSolveAd());
         this.playAgainButton.addEventListener('click', () => this.startNewGame());
         this.shareScoreButton.addEventListener('click', () => this.shareScore());
-        this.rateGameButton.addEventListener('click', () => this.handleRateGame());
-        this.addFavoriteButton.addEventListener('click', () => this.handleAddToFavorites());
-        this.addHomeButton.addEventListener('click', () => this.handleAddToHomeScreen());
     }
 
     initializeGameState() {
@@ -332,112 +296,15 @@ export class WordShiftGame {
         this.levelUpModal.classList.add('hidden');
     }
 
-    async initializeGame() {
-        try {
-            // Initialize Playgama SDK
-            await initializePlaygama();
-            
-            // Check if banner ads are supported
-            this.bannerSupported = bridge.advertisement.isBannerSupported;
-            
-            // Set up rewarded ad state listener
-            bridge.advertisement.on(bridge.EVENT_NAME.REWARDED_STATE_CHANGED, state => {
-                console.log('Rewarded state:', state);
-                switch (state) {
-                    case 'opened':
-                        // Mute game sounds when ad opens
-                        this.audio.isSoundEnabled = false;
-                        this.audio.updateSoundButtonIcon();
-                        break;
-                    case 'closed':
-                    case 'failed':
-                        // Restore sound state when ad closes or fails
-                        this.audio.isSoundEnabled = true;
-                        this.audio.updateSoundButtonIcon();
-                        break;
-                    case 'rewarded':
-                        // Handle the reward
-                        this.handleSolveReward();
-                        break;
-                }
-            });
-
-            // Set up visibility change handler
-            bridge.game.on(bridge.EVENT_NAME.VISIBILITY_STATE_CHANGED, state => {
-                if (state === 'hidden') {
-                    // Pause game when tab is hidden
-                    if (this.timerInterval) {
-                        clearInterval(this.timerInterval);
-                        this.timerInterval = null;
-                    }
-                    // Save game state when hidden
-                    this.saveGameData();
-                    // Hide banner when game is hidden
-                    if (this.bannerSupported) {
-                        bridge.advertisement.hideBanner();
-                    }
-                } else if (state === 'visible' && !this.isGameOver) {
-                    // Resume game when tab becomes visible again
-                    this.startTimer();
-                    // Show banner when game becomes visible
-                    if (this.bannerSupported) {
-                        this.showBanner();
-                    }
-                }
-            });
-
-            // Load saved game data
-            await this.loadGameData();
-
-            // Show initial banner if supported
-            if (this.bannerSupported) {
-                this.showBanner();
-            }
-
-            // Load words and start game
-            await this.loadWords();
-            this.startNewGame();
-
-            // Check leaderboard support
-            if (bridge && bridge.leaderboard) {
-                this.leaderboardSupport = {
-                    isSupported: bridge.leaderboard.isSupported,
-                    isNativePopupSupported: bridge.leaderboard.isNativePopupSupported,
-                    isMultipleBoardsSupported: bridge.leaderboard.isMultipleBoardsSupported,
-                    isSetScoreSupported: bridge.leaderboard.isSetScoreSupported,
-                    isGetScoreSupported: bridge.leaderboard.isGetScoreSupported,
-                    isGetEntriesSupported: bridge.leaderboard.isGetEntriesSupported
-                };
-                console.log('Leaderboard support:', this.leaderboardSupport);
-            }
-
-        } catch (error) {
-            console.error('Error initializing game:', error);
-            // Initialize high score from localStorage as fallback
-            const savedHighScore = localStorage.getItem('highScore');
-            if (savedHighScore) {
-                this.highScore = JSON.parse(savedHighScore);
-            }
-            // Still try to load words and start game even if SDK fails
-            await this.loadWords();
-            this.startNewGame();
-        }
-    }
-
     async loadGameData() {
         try {
-            // Try to load from Playgama platform storage first
-            if (bridge && bridge.storage && await bridge.storage.isAvailable(bridge.STORAGE_TYPE.PLATFORM_INTERNAL)) {
-                console.log('Loading data from Playgama storage');
-                const data = await bridge.storage.get('highScore', bridge.STORAGE_TYPE.PLATFORM_INTERNAL);
-                
+            if (sdk && sdk.data) {
+                // Use getItem instead of getData
+                const data = await sdk.data.getItem('highScore');
                 if (data) {
-                    console.log('Loaded high score from Playgama:', data);
-                    this.highScore = data;
+                    this.highScore = JSON.parse(data);
                 }
             } else {
-                // Fallback to localStorage
-                console.log('Falling back to localStorage');
                 const savedHighScore = localStorage.getItem('highScore');
                 if (savedHighScore) {
                     this.highScore = JSON.parse(savedHighScore);
@@ -445,14 +312,10 @@ export class WordShiftGame {
             }
         } catch (error) {
             console.error('Error loading game data:', error);
-            // Try loading from localStorage as fallback
-            try {
-                const savedHighScore = localStorage.getItem('highScore');
-                if (savedHighScore) {
-                    this.highScore = JSON.parse(savedHighScore);
-                }
-            } catch (e) {
-                console.error('Failed to load from localStorage:', e);
+            // Fallback to localStorage
+            const savedHighScore = localStorage.getItem('highScore');
+            if (savedHighScore) {
+                this.highScore = JSON.parse(savedHighScore);
             }
         }
 
@@ -470,38 +333,15 @@ export class WordShiftGame {
                 moves: this.highScore.moves
             };
 
-            // Try to save to Playgama platform storage first
-            if (bridge && bridge.storage && await bridge.storage.isAvailable(bridge.STORAGE_TYPE.PLATFORM_INTERNAL)) {
-                console.log('Saving high score to Playgama:', gameData);
-                await bridge.storage.set('highScore', gameData, bridge.STORAGE_TYPE.PLATFORM_INTERNAL);
-                
-                // Send score to leaderboard if available
-                if (bridge.leaderboard) {
-                    try {
-                        await bridge.leaderboard.submitScore({
-                            score: this.highScore.level * 1000 + Math.max(0, 1000 - this.highScore.moves),
-                            details: {
-                                level: this.highScore.level,
-                                moves: this.highScore.moves
-                            }
-                        });
-                    } catch (e) {
-                        console.error('Failed to submit to leaderboard:', e);
-                    }
-                }
+            if (sdk && sdk.data) {
+                // Use setItem instead of setData
+                await sdk.data.setItem('highScore', JSON.stringify(gameData));
             } else {
-                // Fallback to localStorage
-                console.log('Falling back to localStorage for high score');
                 localStorage.setItem('highScore', JSON.stringify(gameData));
             }
         } catch (error) {
             console.error('Error saving game data:', error);
-            // Fallback to localStorage
-            try {
-                localStorage.setItem('highScore', JSON.stringify(this.highScore));
-            } catch (e) {
-                console.error('Failed to save to localStorage:', e);
-            }
+            localStorage.setItem('highScore', JSON.stringify(this.highScore));
         }
     }
 
@@ -599,6 +439,7 @@ export class WordShiftGame {
     }
 
     useHint() {
+        if (this.isLoading || this.isGameOver) return;
         if (this.timeLeft <= this.config.hintPenalty) {
             alert('Not enough time for a hint!');
             return;
@@ -641,37 +482,6 @@ export class WordShiftGame {
         }
     }
 
-    async showSolveAd() {
-        try {
-            // Show interstitial before rewarded ad
-            if (bridge && bridge.advertisement) {
-                await bridge.advertisement.showInterstitial();
-            }
-            // Show rewarded ad
-            await bridge.advertisement.showRewarded();
-        } catch (error) {
-            console.error('Error showing ads:', error);
-            // Fallback to regular solve if ad fails
-            this.solveWord();
-        }
-    }
-
-    handleSolveReward() {
-        // Player has watched the ad, give them the reward
-        this.solveWord();
-    }
-
-    solveWord() {
-        this.scrambledWord = this.currentWord;
-        this.createLetterTiles();
-        this.updateTileColors();
-        
-        setTimeout(() => {
-            this.level++;
-            this.selectNewWord();
-        }, 1000);
-    }
-
     handleLevelComplete() {
         // Play level up sound first
         this.audio.play('levelUp');
@@ -685,8 +495,11 @@ export class WordShiftGame {
         this.wordLength = Math.min(this.wordLength, 8); // Cap at 8 letters
         
         // Show interstitial every 5 levels
-        if (this.level % 5 === 0 && bridge && bridge.advertisement) {
-            bridge.advertisement.showInterstitial();
+        if (this.level % 5 === 0 && sdk && sdk.ad) {
+            this.pauseTimer();
+            sdk.ad.requestAd('midgame').finally(() => {
+                this.resumeTimer();
+            });
         }
         
         // Update display
@@ -695,11 +508,6 @@ export class WordShiftGame {
         // Show level up modal
         this.wordLengthDisplay.textContent = this.wordLength;
         this.levelUpModal.classList.remove('hidden');
-
-        // Signal achievement
-        if (bridge && bridge.platform) {
-            bridge.platform.sendMessage("player_got_achievement");
-        }
         
         // Hide modal and select new word after delay
         setTimeout(() => {
@@ -718,12 +526,16 @@ export class WordShiftGame {
             this.timerInterval = null;
         }
         
-        // Set game over state first
+        // Set game over state
         this.isGameOver = true;
 
-        // Show interstitial at game over
-        if (bridge && bridge.advertisement) {
-            bridge.advertisement.showInterstitial();
+        // Show interstitial at game over (only if not already shown)
+        if (sdk && sdk.ad && !this.gameOverAdShown) {
+            this.gameOverAdShown = true;
+            this.pauseTimer();
+            sdk.ad.requestAd('midgame').finally(() => {
+                this.resumeTimer();
+            });
         }
         
         // Calculate stats
@@ -778,20 +590,6 @@ export class WordShiftGame {
                     movesDisplay: !!this.finalMovesDisplay
                 });
             }
-
-            // Signal gameplay stopped
-            if (bridge && bridge.platform) {
-                bridge.platform.sendMessage("gameplay_stopped");
-            }
-
-            // Hide banner at game over
-            if (this.bannerSupported && bridge && bridge.advertisement) {
-                bridge.advertisement.hideBanner();
-            }
-
-            // Submit score to leaderboard
-            this.submitScore();
-
         } catch (error) {
             console.error('Error in endGame:', error);
         }
@@ -819,47 +617,27 @@ export class WordShiftGame {
         }
     }
 
-    showBanner() {
-        if (!bridge || !bridge.advertisement || !this.bannerSupported) return;
-
-        // Configure banner options based on platform
-        let options = {};
+    startNewGame() {
+        // Reset game over ad flag
+        this.gameOverAdShown = false;
         
-        if (bridge.platform) {
-            switch (bridge.platform.id) {
-                case 'vk':
-                    options = {
-                        position: 'bottom',
-                        layoutType: 'resize',
-                        canClose: false
-                    };
-                    break;
-                case 'crazy_games':
-                    options = {
-                        position: 'bottom'
-                    };
-                    break;
-                case 'game_distribution':
-                    options = {
-                        position: 'bottom'
-                    };
-                    break;
-                case 'msn':
-                    options = {
-                        position: 'top:728x90'
-                    };
-                    break;
-                default:
-                    options = {
-                        position: 'bottom'
-                    };
-            }
-        }
+        // Hide game over modal
+        this.hideModals();
+        
+        // Initialize game state
+        this.initializeGameState();
+        
+        // Reset display
+        this.updateDisplay();
+        
+        // Select first word
+        this.selectNewWord();
 
-        bridge.advertisement.showBanner(options);
+        // Refresh banner ad
+        this.requestBanner();
     }
 
-    async shareScore() {
+    shareScore() {
         const totalWordsCompleted = ((this.level - 1) * this.config.wordsPerLevel);
         const shareText = `🎮 Word Shift Score:\n` +
                          `📊 Level ${this.level}\n` +
@@ -868,35 +646,6 @@ export class WordShiftGame {
                          `🏆 High Score: Level ${this.highScore.level}\n` +
                          `🎮 Play Word Shift now!`;
 
-        if (bridge && bridge.social && bridge.social.isShareSupported) {
-            try {
-                const options = {};
-                
-                switch (bridge.platform.id) {
-                    case 'vk':
-                        options.link = window.location.href;
-                        break;
-                    case 'facebook':
-                    case 'msn':
-                        options.title = 'Word Shift Score';
-                        options.text = shareText;
-                        // You would need to generate or have a sharing image
-                        // options.image = 'base64 or URL of sharing image';
-                        break;
-                }
-
-                await bridge.social.share(options);
-                console.log('Score shared successfully');
-            } catch (error) {
-                console.error('Error sharing score:', error);
-                this.fallbackShare(shareText);
-            }
-        } else {
-            this.fallbackShare(shareText);
-        }
-    }
-
-    fallbackShare(shareText) {
         // Fallback to clipboard
         try {
             navigator.clipboard.writeText(shareText);
@@ -914,50 +663,6 @@ export class WordShiftGame {
         }
     }
 
-    async handleRateGame() {
-        if (bridge && bridge.social && bridge.social.isRateSupported) {
-            try {
-                await bridge.social.rate();
-                // Hide the rate button after successful rating
-                this.rateGameButton.style.display = 'none';
-            } catch (error) {
-                console.error('Error rating game:', error);
-            }
-        }
-    }
-
-    async handleAddToFavorites() {
-        if (bridge && bridge.social && bridge.social.isAddToFavoritesSupported) {
-            try {
-                await bridge.social.addToFavorites();
-                // Show success message
-                const originalText = this.addFavoriteButton.innerHTML;
-                this.addFavoriteButton.innerHTML = '<i class="fas fa-check"></i> Added!';
-                setTimeout(() => {
-                    this.addFavoriteButton.innerHTML = originalText;
-                }, 2000);
-            } catch (error) {
-                console.error('Error adding to favorites:', error);
-            }
-        }
-    }
-
-    async handleAddToHomeScreen() {
-        if (bridge && bridge.social && bridge.social.isAddToHomeScreenSupported) {
-            try {
-                await bridge.social.addToHomeScreen();
-                // Show success message
-                const originalText = this.addHomeButton.innerHTML;
-                this.addHomeButton.innerHTML = '<i class="fas fa-check"></i> Added!';
-                setTimeout(() => {
-                    this.addHomeButton.innerHTML = originalText;
-                }, 2000);
-            } catch (error) {
-                console.error('Error adding to home screen:', error);
-            }
-        }
-    }
-
     createLetterTiles() {
         this.wordContainer.innerHTML = '';
         
@@ -972,8 +677,10 @@ export class WordShiftGame {
     }
 
     handleDragStart(e) {
+        if (this.isLoading || this.isGameOver) return;
+        
         const target = e.target.closest('.letter-tile');
-        if (!target || this.isGameOver) return;
+        if (!target) return;
 
         e.preventDefault(); // Prevent text selection
         
@@ -985,7 +692,7 @@ export class WordShiftGame {
             startX: touch.clientX,
             currentTile: target,
             originalIndex: index,
-            moveDirection: null // Will be set to 'left' or 'right' based on drag
+            moveDirection: null
         };
 
         target.classList.add('dragging');
@@ -1093,205 +800,192 @@ export class WordShiftGame {
         // Clear any existing timer
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
+            this.timerInterval = null;
         }
         
         // Start new timer
         this.timerInterval = setInterval(() => {
-            this.timeLeft--;
-            this.updateTimerDisplay();
-            
-            // Check for game over
-            if (this.timeLeft <= 0) {
-                this.endGame();
+            if (!this.isPaused) {
+                this.timeLeft--;
+                this.updateTimerDisplay();
+                
+                // Check for game over
+                if (this.timeLeft <= 0) {
+                    this.endGame();
+                }
             }
         }, 1000);
     }
 
-    startNewGame() {
-        // Hide game over modal
-        this.hideModals();
+    pauseTimer() {
+        if (this.timerInterval) {
+            clearInterval(this.timerInterval);
+            this.timerInterval = null;
+        }
+        this.isPaused = true;
+        console.log('Timer paused');
+    }
+
+    resumeTimer() {
+        if (!this.timerInterval) {
+            this.startTimer();
+        }
+        this.isPaused = false;
+        console.log('Timer resumed');
+    }
+
+    async showSolveAd() {
+        if (this.isLoading || this.isGameOver) return;
+        if (!sdk || !sdk.ad) {
+            // If SDK is not available, just solve the word
+            this.solveWord();
+            return;
+        }
+
+        // Pause timer before showing ad
+        this.pauseTimer();
+        console.log('Timer paused for solve ad');
         
-        // Initialize game state
-        this.initializeGameState();
+        try {
+            // Show rewarded ad
+            await sdk.ad.requestAd('rewarded');
+            console.log('Rewarded ad completed');
+            
+            // If ad was watched successfully, solve the word
+            this.solveWord();
+        } catch (error) {
+            console.error('Error showing rewarded ad:', error);
+            // If ad fails, still solve the word as a fallback
+            this.solveWord();
+        }
+    }
+
+    solveWord() {
+        // Play level up sound
+        this.audio.play('levelUp');
         
-        // Reset display
+        // Increment level
+        this.level++;
+        
+        // Update the scrambled word to the correct word
+        this.scrambledWord = this.currentWord;
+        this.createLetterTiles();
+        this.updateTileColors();
+        
+        // Add time bonus
+        this.timeLeft += this.config.timeBonus;
+        
+        // Calculate new word length
+        this.wordLength = this.config.startWordLength + Math.floor((this.level - 1) / this.config.wordsPerLevel);
+        this.wordLength = Math.min(this.wordLength, 8); // Cap at 8 letters
+        
+        // Show interstitial every 5 levels
+        if (this.level % 5 === 0 && sdk && sdk.ad) {
+            sdk.ad.requestAd('midgame').finally(() => {
+                this.resumeTimer();
+            });
+        } else {
+            // Resume timer after solve animation if no interstitial
+            setTimeout(() => {
+                this.resumeTimer();
+            }, 2000);
+        }
+        
+        // Update display
         this.updateDisplay();
         
-        // Select first word
-        this.selectNewWord();
+        // Show level up modal
+        this.wordLengthDisplay.textContent = this.wordLength;
+        this.levelUpModal.classList.remove('hidden');
         
-        // Show banner if supported
-        if (this.bannerSupported && bridge && bridge.advertisement) {
-            this.showBanner();
-        }
+        // Hide modal and select new word after delay
+        setTimeout(() => {
+            this.levelUpModal.classList.add('hidden');
+            this.selectNewWord();
+        }, 2000);
     }
 
-    async submitScore() {
-        if (!this.leaderboardSupport.isSetScoreSupported) return;
+    async requestBanner() {
+        if (!sdk || !sdk.banner) return;
 
         try {
-            let options = {};
-            const score = this.level * 1000 + Math.max(0, 1000 - this.moves);
+            // Determine banner size based on screen width
+            const isMobile = window.innerWidth <= 768;
+            const bannerConfig = {
+                id: "banner-container",
+                width: isMobile ? 320 : 728,
+                height: isMobile ? 50 : 90
+            };
 
-            switch (bridge.platform.id) {
-                case 'yandex':
-                    options = {
-                        leaderboardName: 'word_shift_scores',
-                        score: score
-                    };
-                    break;
-                case 'facebook':
-                    options = {
-                        leaderboardName: 'word_shift_scores',
-                        score: score
-                    };
-                    break;
-                case 'msn':
-                    options = {
-                        score: score
-                    };
-                    break;
-                case 'lagged':
-                    options = {
-                        boardId: 'word_shift_scores',
-                        score: score
-                    };
-                    break;
-                case 'y8':
-                    options = {
-                        table: 'word_shift_scores',
-                        points: score
-                    };
-                    break;
-            }
-
-            await bridge.leaderboard.setScore(options);
-            console.log('Score submitted successfully:', score);
-        } catch (error) {
-            console.error('Error submitting score:', error);
+            await sdk.banner.requestBanner(bannerConfig);
+            console.log('Banner ad requested successfully:', bannerConfig);
+        } catch (bannerError) {
+            console.error('Error requesting banner ad:', bannerError);
         }
     }
 
-    async showLeaderboard() {
-        if (!this.leaderboardSupport.isSupported) return;
-
+    async initializeGame() {
+        console.log('Entering initializeGame...');
         try {
-            // Try native popup first if supported
-            if (this.leaderboardSupport.isNativePopupSupported) {
-                let options = {};
-                if (bridge.platform.id === 'y8') {
-                    options = {
-                        table: 'word_shift_scores'
-                    };
-                }
-                await bridge.leaderboard.showNativePopup(options);
-                return;
+            // Initialize CrazyGames SDK
+            if (sdk) {
+                console.log('SDK found, attempting initialization...');
+                await sdk.init();
+                console.log('CrazyGames SDK initialized successfully');
+                
+                // Request banner ad
+                await this.requestBanner();
+            } else {
+                console.log('No SDK found, continuing without it');
             }
-
-            // Fallback to getting entries and showing custom leaderboard
-            if (this.leaderboardSupport.isGetEntriesSupported) {
-                let options = {};
-                switch (bridge.platform.id) {
-                    case 'yandex':
-                        options = {
-                            leaderboardName: 'word_shift_scores',
-                            includeUser: true,
-                            quantityAround: 10,
-                            quantityTop: 10
-                        };
-                        break;
-                    case 'facebook':
-                        options = {
-                            leaderboardName: 'word_shift_scores',
-                            count: 10,
-                            offset: 0
-                        };
-                        break;
-                    case 'y8':
-                        options = {
-                            table: 'word_shift_scores',
-                            perPage: 10,
-                            page: 1,
-                            mode: 'alltime'
-                        };
-                        break;
-                }
-
-                const entries = await bridge.leaderboard.getEntries(options);
-                this.displayLeaderboard(entries);
-            }
+            
+            // Load game data
+            console.log('Loading game data...');
+            await this.loadGameData();
+            console.log('Game data loaded');
+            
+            // Load words
+            console.log('Loading words...');
+            await this.loadWords();
+            console.log('Words loaded');
+            
+            // Enable interactive elements
+            console.log('Enabling interactive elements...');
+            if (this.hintButton) this.hintButton.disabled = false;
+            if (this.solveButton) this.solveButton.disabled = false;
+            this.isLoading = false;
+            console.log('Interactive elements enabled, isLoading:', this.isLoading);
+            
+            // Start game
+            console.log('Selecting first word...');
+            this.selectNewWord();
+            console.log('First word selected, initialization complete');
+            
         } catch (error) {
-            console.error('Error showing leaderboard:', error);
+            console.error('Error during initialization:', error);
+            if (this.wordContainer) {
+                this.wordContainer.innerHTML = `
+                    <div class="loading error">
+                        <div class="loading-text">Error loading game. Please refresh the page.</div>
+                    </div>`;
+                console.log('Error state displayed');
+            } else {
+                console.error('Could not display error state - word container not found');
+            }
         }
-    }
-
-    displayLeaderboard(entries) {
-        // Create leaderboard modal if it doesn't exist
-        let leaderboardModal = document.getElementById('leaderboard-modal');
-        if (!leaderboardModal) {
-            leaderboardModal = document.createElement('div');
-            leaderboardModal.id = 'leaderboard-modal';
-            leaderboardModal.className = 'modal';
-            document.body.appendChild(leaderboardModal);
-        }
-
-        // Build leaderboard HTML
-        let html = `
-            <div class="modal-content">
-                <h2>Leaderboard</h2>
-                <div class="leaderboard-entries">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Rank</th>
-                                <th>Player</th>
-                                <th>Score</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-        `;
-
-        entries.forEach(entry => {
-            const playerName = entry.name || entry.playerName || entry.playername || 'Anonymous';
-            const score = entry.score || entry.points || 0;
-            const rank = entry.rank || '#';
-
-            html += `
-                <tr${entry.isCurrentPlayer ? ' class="current-player"' : ''}>
-                    <td>${rank}</td>
-                    <td>${playerName}</td>
-                    <td>${score}</td>
-                </tr>
-            `;
-        });
-
-        html += `
-                        </tbody>
-                    </table>
-                </div>
-                <button class="btn close-btn">Close</button>
-            </div>
-        `;
-
-        leaderboardModal.innerHTML = html;
-        leaderboardModal.classList.remove('hidden');
-
-        // Add close button handler
-        const closeBtn = leaderboardModal.querySelector('.close-btn');
-        closeBtn.addEventListener('click', () => {
-            leaderboardModal.classList.add('hidden');
-        });
     }
 }
 
 // Initialize game when page loads
 document.addEventListener('DOMContentLoaded', async () => {
     try {
-        // Initialize Playgama SDK first and wait for it
-        const sdkInitialized = await initializePlaygama();
-        console.log('SDK initialization result:', sdkInitialized);
+        // Initialize CrazyGames SDK
+        if (sdk) {
+            await sdk.init();
+            console.log('CrazyGames SDK initialized successfully');
+        }
         
-        // Then initialize the game
+        // Initialize the game
         window.game = new WordShiftGame();
     } catch (error) {
         console.error('Error during initialization:', error);
