@@ -112,29 +112,22 @@ class AudioManager {
 }
 
 // Initialize Playgama SDK
-let bridge = window.PG_BRIDGE;
+let bridge;
 let isPlaygamaEnvironment = false;
 
 async function initializePlaygama() {
     try {
-        // Check if we're in a Playgama environment
-        if (typeof window.PG_BRIDGE !== 'undefined') {
-            bridge = window.PG_BRIDGE;
-            isPlaygamaEnvironment = true;
+        // Initialize bridge according to SDK docs
+        await bridge.initialize();
+        isPlaygamaEnvironment = true;
             
-            // Initialize bridge according to SDK docs
-            await bridge.initialize();
-            
-            // Send mandatory game_ready message
-            await bridge.platform.sendMessage("game_ready");
-            console.log('Playgama SDK initialized successfully');
-            return true;
-        } else {
-            console.log('Not running in Playgama environment, SDK features will be disabled');
-            return false;
-        }
+        // Send mandatory game_ready message
+        await bridge.platform.sendMessage("game_ready");
+        console.log('Playgama SDK initialized successfully');
+        return true;
     } catch (error) {
         console.error('Error initializing Playgama SDK:', error);
+        isPlaygamaEnvironment = false;
         return false;
     }
 }
