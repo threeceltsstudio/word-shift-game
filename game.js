@@ -1,6 +1,42 @@
 // Import word lists
 import WORD_LISTS from './wordlist.js';
 
+// Initialize Playgama SDK
+let bridge = window['playgama']?.bridge;
+let isPlaygamaEnvironment = false;
+
+// Listen for bridge to become available
+window.addEventListener('playgamaBridgeReady', () => {
+    bridge = window['playgama']?.bridge;
+    // Reinitialize if game is already running
+    if (window.game) {
+        initializePlaygama().then(result => {
+            console.log('Bridge ready, reinitialized with result:', result);
+        });
+    }
+});
+
+async function initializePlaygama() {
+    bridge = window['playgama']?.bridge;
+    if (!bridge) {
+        console.warn('Playgama bridge not found. Running outside Playgama environment.');
+        isPlaygamaEnvironment = false;
+        return false;
+    }
+
+    try {
+        await bridge.initialize();
+        isPlaygamaEnvironment = true;
+        await bridge.platform.sendMessage("game_ready");
+        console.log('Playgama SDK initialized successfully');
+        return true;
+    } catch (error) {
+        console.error('Error initializing Playgama SDK:', error);
+        isPlaygamaEnvironment = false;
+        return false;
+    }
+}
+
 // Audio Manager Class
 class AudioManager {
     constructor() {
@@ -108,27 +144,6 @@ class AudioManager {
                 ]);
                 break;
         }
-    }
-}
-
-// Initialize Playgama SDK
-let bridge;
-let isPlaygamaEnvironment = false;
-
-async function initializePlaygama() {
-    try {
-        // Initialize bridge according to SDK docs
-        await bridge.initialize();
-        isPlaygamaEnvironment = true;
-            
-        // Send mandatory game_ready message
-        await bridge.platform.sendMessage("game_ready");
-        console.log('Playgama SDK initialized successfully');
-        return true;
-    } catch (error) {
-        console.error('Error initializing Playgama SDK:', error);
-        isPlaygamaEnvironment = false;
-        return false;
     }
 }
 
